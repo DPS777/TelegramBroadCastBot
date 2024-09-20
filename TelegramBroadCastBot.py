@@ -5,6 +5,7 @@ from dotenv import load_dotenv, set_key
 from pathlib import Path
 from enum import Enum
 import asyncio
+from telethon.tl.functions.messages import GetDialogFiltersRequest
 
 CONFIG_FOLDER = 'config'
 CHANNELS_FILE = os.path.join(CONFIG_FOLDER, 'channels.txt')
@@ -40,6 +41,25 @@ class TelegramBot:
             chats_file.write(f"Chat ID: {dialog.id}, Title: {dialog.title} \n")
           
         print("List of groups printed successfully!")
+
+    async def list_folders(self):
+        await self.client.connect()
+
+        # Ensure you're authorized
+        if not await self.client.is_user_authorized():
+            await self.client.send_code_request(self.phone_number)
+            await self.client.sign_in(self.phone_number, input('Enter the code: '))
+
+        # Get a list of all the folders
+        folders_w_filters = await self.client(GetDialogFiltersRequest())
+        folders = folders_w_filters.filters
+        folders_file = open(str(os.path.join(CONFIG_FOLDER,f"folders_of_{self.phone_number}.txt")), "w", encoding="utf-8")
+        # Print information about each folder
+        for folder in folders[1:]:
+            print(f"Folder ID: {folder.id}, Title: {folder.title}")
+            folders_file.write(f"Folder ID: {folder.id}, Title: {folder.title} \n")
+          
+        print("List of folders printed successfully!")
 
     async def broadcast_message(self, message, channels):
         await self.client.connect()
@@ -140,6 +160,7 @@ async def main():
 
     elif choice == '2':
         await bot.list_folders()
+        
     elif choice == '3':
 
         # Check if message file exists
