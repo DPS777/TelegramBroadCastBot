@@ -136,8 +136,13 @@ class TelegramBot:
         if not await self.client.is_user_authorized():
             await self.client.send_code_request(self.phone_number)
             await self.client.sign_in(self.phone_number, input('Enter the code: '))
+        
+        if folder_id.lstrip("-").isdigit() and int(folder_id) == -1:
+            dialogs_raw = await self.client(GetContactsRequest(hash=0))
+            chats = [(user.id, f"{user.first_name} {user.last_name}" if user.last_name else user.first_name) for user in dialogs_raw.users]
+            chats_file = open(str(os.path.join(CONFIG_FOLDER,f"chats_of_{self.phone_number}_from_folder_{folder_id}.txt")), "w", encoding="utf-8")           
 
-        if folder_id.isdigit() and (int(folder_id) == 0 or int(folder_id) == 1):
+        elif folder_id.isdigit() and (int(folder_id) == 0 or int(folder_id) == 1):
             dialogs_raw = await self.client.get_dialogs(folder=int(folder_id))
             chats = [(dialog.id, dialog.title) for dialog in dialogs_raw]
             chats_file = open(str(os.path.join(CONFIG_FOLDER,f"chats_of_{self.phone_number}_from_folder_{folder_id}.txt")), "w", encoding="utf-8")           
@@ -273,7 +278,8 @@ async def main():
 
     if choice == '1':
 
-        print("ID: -1, will list all chats. If ID is not provided or incorrect this will be the default option.")
+        print("ID: -2, will list all chats. If ID is not provided or incorrect this will be the default option.")
+        print("ID: -1, will list all chats from your contact list, including those that you have not started a conversation with.")
         print("ID: 0, will list all chats that don’t belong to any folder (pinned chats included).")
         print("ID: 1, will list all arquived chats (pinned chats included).")
 
