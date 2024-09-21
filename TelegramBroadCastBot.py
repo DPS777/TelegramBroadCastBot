@@ -129,8 +129,11 @@ class TelegramBot:
 
         return chats_from_folder
         
-    async def list_chats_from_folder(self, folders, folder_id):
+    async def list_chats_from_folder(self, folders, folder_id, fill=False):
+
         await self.client.connect()
+
+        all_folders = False
 
         # Ensure you're authorized
         if not await self.client.is_user_authorized():
@@ -140,29 +143,38 @@ class TelegramBot:
         if folder_id.lstrip("-").isdigit() and int(folder_id) == -1:
             dialogs_raw = await self.client(GetContactsRequest(hash=0))
             chats = [(user.id, f"{user.first_name} {user.last_name}" if user.last_name else user.first_name) for user in dialogs_raw.users]
-            chats_file = open(str(os.path.join(CONFIG_FOLDER,f"chats_of_{self.phone_number}_from_folder_{folder_id}.txt")), "w", encoding="utf-8")           
-
         elif folder_id.isdigit() and (int(folder_id) == 0 or int(folder_id) == 1):
             dialogs_raw = await self.client.get_dialogs(folder=int(folder_id))
             chats = [(dialog.id, dialog.title) for dialog in dialogs_raw]
-            chats_file = open(str(os.path.join(CONFIG_FOLDER,f"chats_of_{self.phone_number}_from_folder_{folder_id}.txt")), "w", encoding="utf-8")           
-
         elif folder_id.isdigit() and any(int(folder_id) == folder.id for folder in folders):
             chats = await self.get_chats_from_folder(folder_id)
-            chats_file = open(str(os.path.join(CONFIG_FOLDER,f"chats_of_{self.phone_number}_from_folder_{folder_id}.txt")), "w", encoding="utf-8")
         else:
             dialogs_raw = await self.client.get_dialogs()
             chats = [(dialog.id, dialog.title) for dialog in dialogs_raw]
-            chats_file = open(str(os.path.join(CONFIG_FOLDER,f"chats_of_{self.phone_number}_from_all_folders.txt")), "w", encoding="utf-8")
+            all_folders = True
 
-        # Print information about each chat
-        for id, title in chats:
-            print(f"Chat ID: {id}, Title: {title}")
-            chats_file.write(f"Chat ID: {id}, Title: {title} \n")
+        if fill:
+            chats_file = open(str(CHANNELS_FILE), "a", encoding="utf-8")
+            chats_file.write("\n")
+            for id, title in chats:
+                chats_file.write(f"{id}\n")
+
+            print("\"channels.txt\" file filled successfully!")
+
+        else:
+            
+            if all_folders:
+                chats_file = open(str(os.path.join(CONFIG_FOLDER,f"chats_of_{self.phone_number}_from_all_folders.txt")), "w", encoding="utf-8")
+            else:
+                chats_file = open(str(os.path.join(CONFIG_FOLDER,f"chats_of_{self.phone_number}_from_folder_{folder_id}.txt")), "w", encoding="utf-8")
+
+            # Print information about each chat
+            for id, title in chats:
+                print(f"Chat ID: {id}, Title: {title}")
+                chats_file.write(f"Chat ID: {id}, Title: {title} \n")
           
-        print("List of chats printed successfully!")
+            print("List of chats printed successfully!")
 
-        return
 
     async def list_chats(self):
         await self.client.connect()
@@ -271,8 +283,9 @@ async def main():
     print("Choose an option:")
     print("1. List All Chats or From Folder")
     print("2. List Folders")
-    print("3. Broadcast Message")
-    print("4. Exit")
+    print("3. Fill \"channesls.txt\" file with chat IDs from options 1")
+    print("4. Broadcast Message")
+    print("5. Exit")
 
     choice = input("Enter your choice: ")
 
@@ -285,7 +298,7 @@ async def main():
 
         folders_w_info = await bot.get_folders()
         for folder in folders_w_info:
-            print(f"ID: {folder.id}, Will list chats from {folder.title} folder.")
+            print(f"ID: {folder.id}, will list chats from {folder.title} folder.")
 
         folder_id = input("Enter the folder ID you want to list chats from: ")
 
@@ -293,8 +306,24 @@ async def main():
 
     elif choice == '2':
         await bot.list_folders()
-
+    
     elif choice == '3':
+
+        print("Warning! This will ADD the chat IDs to \"channesls.txt\" file, not OVERWRITE them.")
+        print("ID: -2, will fill \"channesls.txt\" file with all chats. If ID is not provided or incorrect this will be the default option.")
+        print("ID: -1, will fill \"channesls.txt\" file with all chats from your contact list, including those that you have not started a conversation with.")
+        print("ID: 0, will fill \"channesls.txt\" file with all chats that don’t belong to any folder (pinned chats included).")
+        print("ID: 1, will fill \"channesls.txt\" file with all arquived chats (pinned chats included).")
+
+        folders_w_info = await bot.get_folders()
+        for folder in folders_w_info:
+            print(f"ID: {folder.id}, will fill \"channesls.txt\" file with chats from {folder.title} folder.")
+
+        folder_id = input("Enter the folder ID you want to list chats from: ")
+
+        await bot.list_chats_from_folder(folders_w_info, folder_id, fill=True)
+
+    elif choice == '4':
 
         # Check if message file exists
         if not os.path.exists(MESSAGE_FILE):
@@ -325,7 +354,7 @@ async def main():
             return
 
         with open(CHANNELS_FILE, 'r') as f:
-            channels = [int(line.strip()) for line in f]
+            channels = [int(line.strip()) for line in f if line.strip()]
 
         print(f'Broadcasting message to {len(channels)} channels...')
 
@@ -333,7 +362,7 @@ async def main():
         
         return
 
-    elif choice == '3':
+    elif choice == '5':
         print("Exiting...")
         return
     else:
