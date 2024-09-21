@@ -6,6 +6,7 @@ from pathlib import Path
 from enum import Enum
 import asyncio
 from telethon.tl.functions.messages import GetDialogFiltersRequest
+from telethon.tl.functions.contacts import GetContactsRequest
 
 CONFIG_FOLDER = 'config'
 CHANNELS_FILE = os.path.join(CONFIG_FOLDER, 'channels.txt')
@@ -17,12 +18,146 @@ required_fields = {
     'FILE': '',
 }
 
+class FolderTags(Enum):
+    CONTACT = 0
+    NON_CONTACT = 1
+    GROUP = 2
+    CHANNELS = 3
+    BOT = 4
+
 class TelegramBot:
     def __init__(self, api_id, api_hash, phone_number):
         self.api_id = api_id
         self.api_hash = api_hash
         self.phone_number = phone_number
         self.client = TelegramClient(os.path.join(CONFIG_FOLDER, 'session_' + phone_number), api_id, api_hash)
+
+    async def get_folders(self):
+        await self.client.connect()
+        
+        # Ensure you're authorized
+        if not await self.client.is_user_authorized():
+            await self.client.send_code_request(self.phone_number)
+            await self.client.sign_in(self.phone_number, input('Enter the code: '))
+
+        # Get a list of all the folders
+        folders_w_filters = await self.client(GetDialogFiltersRequest())
+        return folders_w_filters.filters[1:]
+
+    async def get_folder(self, folder_id):
+        await self.client.connect()
+
+        # Ensure you're authorized
+        if not await self.client.is_user_authorized():
+            await self.client.send_code_request(self.phone_number)
+            await self.client.sign_in(self.phone_number, input('Enter the code: '))
+
+        # Get a list of all the folders
+        folders = await self.get_folders()
+        return next((folder for folder in folders if int(folder_id) == folder.id), None)
+    
+    async def list_folders(self):
+
+        folders_w_info = await self.get_folders()
+        folders = [(folder.id, folder.title) for folder in folders_w_info]
+        folders_file = open(str(os.path.join(CONFIG_FOLDER,f"folders_of_{self.phone_number}.txt")), "w", encoding="utf-8")
+        # Print information about each folder
+        for id, title in folders:
+            print(f"Folder ID: {id}, Title: {title}")
+            folders_file.write(f"Folder ID: {id}, Title: {title} \n")
+          
+        print("List of folders printed successfully!")
+    
+    async def get_peers_ids_from_folder(self, folder):
+        if folder is not None:
+            peers = []
+            peers.extend(folder.pinned_peers)
+            peers.extend(folder.include_peers)
+            peers.extend(folder.exclude_peers)
+            return [peer.channel_id if isinstance(peer, telethon.types.InputPeerChannel) else peer.user_id if isinstance(peer, telethon.types.InputPeerUser) else peer.chat_id if isinstance(peer, telethon.types.InputPeerChat) else None for peer in peers]
+        else:
+            return []
+        
+    async def get_folder_tags(self, folder):
+        tags = []
+
+        if folder.contacts:
+            tags.append(FolderTags.CONTACT)
+        if folder.non_contacts:
+            tags.append(FolderTags.NON_CONTACT)
+        if folder.groups:
+            tags.append(FolderTags.GROUP)
+        if folder.broadcasts:
+            tags.append(FolderTags.CHANNELS)
+        if folder.bots:
+            tags.append(FolderTags.BOT)
+
+        return tags
+
+    async def get_chats_from_folder(self, folder_id):
+        await self.client.connect()
+
+        # Ensure you're authorized
+        if not await self.client.is_user_authorized():
+            await self.client.send_code_request(self.phone_number)
+            await self.client.sign_in(self.phone_number, input('Enter the code: '))
+
+        chats = await self.client.get_dialogs()
+        folder = await self.get_folder(folder_id)
+        peers_ids = await self.get_peers_ids_from_folder(folder)
+        folder_tags = await self.get_folder_tags(folder)
+
+        chats_from_folder = [(chat.id, chat.title) for chat in chats for peer in peers_ids if str(peer) in str(chat.id)]
+
+        if folder_tags.__contains__(FolderTags.CONTACT):
+            chats_from_folder.extend([(chat.id, chat.title) for chat in chats if isinstance(chat.entity, telethon.types.User) and chat.entity.contact])
+
+        if folder_tags.__contains__(FolderTags.NON_CONTACT):
+            chats_from_folder.extend([(chat.id, chat.title) for chat in chats if isinstance(chat.entity, telethon.types.User) and not chat.entity.contact and not chat.entity.bot])
+
+        if folder_tags.__contains__(FolderTags.GROUP):
+            chats_from_folder.extend([(chat.id, chat.title) for chat in chats if (isinstance(chat.entity, telethon.types.Channel)) and chat.entity.megagroup])
+            chats_from_folder.extend([(chat.id, chat.title) for chat in chats if (isinstance(chat.entity, telethon.types.Chat)) and not chat.entity.deactivated])
+
+        if folder_tags.__contains__(FolderTags.CHANNELS):
+            chats_from_folder.extend([(chat.id, chat.title) for chat in chats if isinstance(chat.entity, telethon.types.Channel) and not chat.entity.megagroup])
+
+        if folder_tags.__contains__(FolderTags.BOT):
+            chats_from_folder.extend([(chat.id, chat.title) for chat in chats if isinstance(chat.entity, telethon.types.User) and chat.entity.bot])
+
+        chats_from_folder = list(set(chats_from_folder))
+
+        return chats_from_folder
+        
+    async def list_chats_from_folder(self, folders, folder_id):
+        await self.client.connect()
+
+        # Ensure you're authorized
+        if not await self.client.is_user_authorized():
+            await self.client.send_code_request(self.phone_number)
+            await self.client.sign_in(self.phone_number, input('Enter the code: '))
+
+        if folder_id.isdigit() and (int(folder_id) == 0 or int(folder_id) == 1):
+            dialogs_raw = await self.client.get_dialogs(folder=int(folder_id))
+            chats = [(dialog.id, dialog.title) for dialog in dialogs_raw]
+            chats_file = open(str(os.path.join(CONFIG_FOLDER,f"chats_of_{self.phone_number}_from_folder_{folder_id}.txt")), "w", encoding="utf-8")           
+
+        elif folder_id.isdigit() and any(int(folder_id) == folder.id for folder in folders):
+            chats = await self.get_chats_from_folder(folder_id)
+            chats_file = open(str(os.path.join(CONFIG_FOLDER,f"chats_of_{self.phone_number}_from_folder_{folder_id}.txt")), "w", encoding="utf-8")
+        else:
+            dialogs_raw = await self.client.get_dialogs()
+            chats = [(dialog.id, dialog.title) for dialog in dialogs_raw]
+            chats_file = open(str(os.path.join(CONFIG_FOLDER,f"chats_of_{self.phone_number}_from_all_folders.txt")), "w", encoding="utf-8")
+
+        # Print information about each chat
+        for id, title in chats:
+            print(f"Chat ID: {id}, Title: {title}")
+            chats_file.write(f"Chat ID: {id}, Title: {title} \n")
+          
+        print("List of chats printed successfully!")
+
+        return
 
     async def list_chats(self):
         await self.client.connect()
@@ -41,25 +176,6 @@ class TelegramBot:
             chats_file.write(f"Chat ID: {dialog.id}, Title: {dialog.title} \n")
           
         print("List of groups printed successfully!")
-
-    async def list_folders(self):
-        await self.client.connect()
-
-        # Ensure you're authorized
-        if not await self.client.is_user_authorized():
-            await self.client.send_code_request(self.phone_number)
-            await self.client.sign_in(self.phone_number, input('Enter the code: '))
-
-        # Get a list of all the folders
-        folders_w_filters = await self.client(GetDialogFiltersRequest())
-        folders = folders_w_filters.filters
-        folders_file = open(str(os.path.join(CONFIG_FOLDER,f"folders_of_{self.phone_number}.txt")), "w", encoding="utf-8")
-        # Print information about each folder
-        for folder in folders[1:]:
-            print(f"Folder ID: {folder.id}, Title: {folder.title}")
-            folders_file.write(f"Folder ID: {folder.id}, Title: {folder.title} \n")
-          
-        print("List of folders printed successfully!")
 
     async def broadcast_message(self, message, channels):
         await self.client.connect()
@@ -148,7 +264,7 @@ async def main():
     bot = TelegramBot(api_id, api_hash, phone_number)
 
     print("Choose an option:")
-    print("1. List Chats")
+    print("1. List All Chats or From Folder")
     print("2. List Folders")
     print("3. Broadcast Message")
     print("4. Exit")
@@ -156,11 +272,22 @@ async def main():
     choice = input("Enter your choice: ")
 
     if choice == '1':
-        await bot.list_chats()
+
+        print("ID: -1, will list all chats. If ID is not provided or incorrect this will be the default option.")
+        print("ID: 0, will list all chats that don’t belong to any folder (pinned chats included).")
+        print("ID: 1, will list all arquived chats (pinned chats included).")
+
+        folders_w_info = await bot.get_folders()
+        for folder in folders_w_info:
+            print(f"ID: {folder.id}, Will list chats from {folder.title} folder.")
+
+        folder_id = input("Enter the folder ID you want to list chats from: ")
+
+        await bot.list_chats_from_folder(folders_w_info, folder_id)
 
     elif choice == '2':
         await bot.list_folders()
-        
+
     elif choice == '3':
 
         # Check if message file exists
