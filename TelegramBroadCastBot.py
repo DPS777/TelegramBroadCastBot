@@ -5,8 +5,9 @@ from dotenv import load_dotenv, set_key
 from pathlib import Path
 from enum import Enum
 import asyncio
-from telethon.tl.functions.messages import GetDialogFiltersRequest
+from telethon.tl.functions.messages import GetDialogFiltersRequest, GetPeerDialogsRequest
 from telethon.tl.functions.contacts import GetContactsRequest
+import datetime
 
 CONFIG_FOLDER = 'config'
 CHANNELS_FILE = os.path.join(CONFIG_FOLDER, 'channels.txt')
@@ -24,6 +25,9 @@ class FolderTags(Enum):
     GROUP = 2
     CHANNELS = 3
     BOT = 4
+    EXCLUDED_MUTED = 5
+    EXCLUDED_READ = 6
+    EXCLUDED_ARQUIVED = 7
 
 class TelegramBot:
     def __init__(self, api_id, api_hash, phone_number):
@@ -91,6 +95,12 @@ class TelegramBot:
             tags.append(FolderTags.CHANNELS)
         if folder.bots:
             tags.append(FolderTags.BOT)
+        if folder.exclude_muted:
+            tags.append(FolderTags.EXCLUDED_MUTED)
+        if folder.exclude_read:
+            tags.append(FolderTags.EXCLUDED_READ)
+        if folder.exclude_archived:
+            tags.append(FolderTags.EXCLUDED_ARQUIVED)
 
         return tags
 
@@ -125,6 +135,35 @@ class TelegramBot:
         if folder_tags.__contains__(FolderTags.BOT):
             chats_from_folder.extend([(chat.id, chat.title) for chat in chats if isinstance(chat.entity, telethon.types.User) and chat.entity.bot])
 
+        if folder_tags.__contains__(FolderTags.EXCLUDED_MUTED):
+            # Objects with diferent types of tags
+            from_here_chats_in_peersDialogs = await self.client(GetPeerDialogsRequest(peers=[from_here_chat[0] for from_here_chat in chats_from_folder]))
+            # Chats with unmuted messages and parcial ids
+            unmuted_chats_ids = [dialog.peer.channel_id if isinstance(dialog.peer, telethon.types.PeerChannel) else dialog.peer.user_id if isinstance(dialog.peer, telethon.types.PeerUser) else dialog.peer.chat_id if isinstance(dialog.peer, telethon.types.PeerChat) else None for dialog in from_here_chats_in_peersDialogs.dialogs if dialog.notify_settings.mute_until is None or dialog.notify_settings.mute_until < datetime.datetime.now(datetime.timezone.utc)]
+            # Chats with unmuted messages and full ids
+            chats_from_folder = list(filter(lambda chat: any(str(muted_chats_id) in str(chat[0]) for muted_chats_id in unmuted_chats_ids), chats_from_folder))
+
+        if folder_tags.__contains__(FolderTags.EXCLUDED_READ):
+            # Objects with diferent types of tags
+            from_here_chats_in_peersDialogs = await self.client(GetPeerDialogsRequest(peers=[from_here_chat[0] for from_here_chat in chats_from_folder]))
+            # Chats with unread messages and parcial ids
+            unread_chats_ids = [dialog.peer.channel_id if isinstance(dialog.peer, telethon.types.PeerChannel) else dialog.peer.user_id if isinstance(dialog.peer, telethon.types.PeerUser) else dialog.peer.chat_id if isinstance(dialog.peer, telethon.types.PeerChat) else None for dialog in from_here_chats_in_peersDialogs.dialogs if dialog.unread_count != 0]
+            # Chats with unread messages and full ids
+            chats_from_folder = list(filter(lambda chat: any(str(read_chats_id) in str(chat[0]) for read_chats_id in unread_chats_ids), chats_from_folder))
+
+        if folder_tags.__contains__(FolderTags.EXCLUDED_ARQUIVED):
+            # Objects with diferent types of tags
+            from_here_chats_in_peersDialogs = await self.client(GetPeerDialogsRequest(peers=[from_here_chat[0] for from_here_chat in chats_from_folder]))
+            # Chats arquived and pinned with parcial ids
+            arquived_with_pinned_chats = await self.client.get_dialogs(folder=1)
+            # Chats pinned with parcial ids
+            pinned_chats_ids = [dialog.peer.channel_id if isinstance(dialog.peer, telethon.types.PeerChannel) else dialog.peer.user_id if isinstance(dialog.peer, telethon.types.PeerUser) else dialog.peer.chat_id if isinstance(dialog.peer, telethon.types.PeerChat) else None for dialog in from_here_chats_in_peersDialogs.dialogs if dialog.pinned == True]
+            # Chats arquived with full ids
+            arquived_only_chats = list(filter(lambda dialog: not any(str(pinned_chats_id) in str(dialog.id) for pinned_chats_id in pinned_chats_ids), arquived_with_pinned_chats))
+            arquived_only_chats_ids = [dialog.id for dialog in arquived_only_chats]
+            # Chats unarquived with full ids
+            chats_from_folder = list(filter(lambda chat: not any(str(arquived_only_chats_id) in str(chat[0]) for arquived_only_chats_id in arquived_only_chats_ids), chats_from_folder))
+
         chats_from_folder = list(set(chats_from_folder))
 
         return chats_from_folder
@@ -140,9 +179,21 @@ class TelegramBot:
             await self.client.send_code_request(self.phone_number)
             await self.client.sign_in(self.phone_number, input('Enter the code: '))
         
-        if folder_id.lstrip("-").isdigit() and int(folder_id) == -1:
+        if folder_id.lstrip("-").isdigit() and int(folder_id) == -3:
             dialogs_raw = await self.client(GetContactsRequest(hash=0))
             chats = [(user.id, f"{user.first_name} {user.last_name}" if user.last_name else user.first_name) for user in dialogs_raw.users]
+        elif folder_id.lstrip("-").isdigit() and int(folder_id) == -2:
+            dialogs_raw = await self.client.get_dialogs(folder=0)
+            chats = [(dialog.id, dialog.title) for dialog in dialogs_raw]
+            from_here_chats_in_peersDialogs = await self.client(GetPeerDialogsRequest(peers=[chat[0] for chat in chats]))
+            pinned_chats_ids = [dialog.peer.channel_id if isinstance(dialog.peer, telethon.types.PeerChannel) else dialog.peer.user_id if isinstance(dialog.peer, telethon.types.PeerUser) else dialog.peer.chat_id if isinstance(dialog.peer, telethon.types.PeerChat) else None for dialog in from_here_chats_in_peersDialogs.dialogs if dialog.pinned == True]
+            chats = list(filter(lambda chat: not any(str(pinned_chats_id) in str(chat[0]) for pinned_chats_id in pinned_chats_ids), chats))
+        elif folder_id.lstrip("-").isdigit() and int(folder_id) == -1:
+            dialogs_raw = await self.client.get_dialogs(folder=1)
+            chats = [(dialog.id, dialog.title) for dialog in dialogs_raw]
+            from_here_chats_in_peersDialogs = await self.client(GetPeerDialogsRequest(peers=[chat[0] for chat in chats]))
+            pinned_chats_ids = [dialog.peer.channel_id if isinstance(dialog.peer, telethon.types.PeerChannel) else dialog.peer.user_id if isinstance(dialog.peer, telethon.types.PeerUser) else dialog.peer.chat_id if isinstance(dialog.peer, telethon.types.PeerChat) else None for dialog in from_here_chats_in_peersDialogs.dialogs if dialog.pinned == True]
+            chats = list(filter(lambda chat: not any(str(pinned_chats_id) in str(chat[0]) for pinned_chats_id in pinned_chats_ids), chats))
         elif folder_id.isdigit() and (int(folder_id) == 0 or int(folder_id) == 1):
             dialogs_raw = await self.client.get_dialogs(folder=int(folder_id))
             chats = [(dialog.id, dialog.title) for dialog in dialogs_raw]
@@ -154,10 +205,15 @@ class TelegramBot:
             all_folders = True
 
         if fill:
+
+            with open(CHANNELS_FILE, 'r') as f:
+                channels = [int(line.strip()) for line in f if line.strip()]
+
             chats_file = open(str(CHANNELS_FILE), "a", encoding="utf-8")
             chats_file.write("\n")
             for id, title in chats:
-                chats_file.write(f"{id}\n")
+                if id not in channels:
+                    chats_file.write(f"{id}\n")
 
             print("\"channels.txt\" file filled successfully!")
 
@@ -283,7 +339,7 @@ async def main():
     print("Choose an option:")
     print("1. List All Chats or From Folder")
     print("2. List Folders")
-    print("3. Fill \"channesls.txt\" file with chat IDs from options 1")
+    print("3. Fill \"channels.txt\" file with chat IDs from options 1")
     print("4. Broadcast Message")
     print("5. Exit")
 
@@ -291,8 +347,10 @@ async def main():
 
     if choice == '1':
 
-        print("ID: -2, will list all chats. If ID is not provided or incorrect this will be the default option.")
-        print("ID: -1, will list all chats from your contact list, including those that you have not started a conversation with.")
+        print("ID: -4, will list all chats. If ID is not provided or incorrect this will be the default option.")
+        print("ID: -3, will list all chats from your contact list, including those that you have not started a conversation with.")
+        print("ID: -2, will list all chats that don’t belong to any folder (pinned chats not included).")
+        print("ID: -1, will list all arquived chats (pinned chats not included)")
         print("ID: 0, will list all chats that don’t belong to any folder (pinned chats included).")
         print("ID: 1, will list all arquived chats (pinned chats included).")
 
@@ -309,11 +367,13 @@ async def main():
     
     elif choice == '3':
 
-        print("Warning! This will ADD the chat IDs to \"channesls.txt\" file, not OVERWRITE them.")
-        print("ID: -2, will fill \"channesls.txt\" file with all chats. If ID is not provided or incorrect this will be the default option.")
-        print("ID: -1, will fill \"channesls.txt\" file with all chats from your contact list, including those that you have not started a conversation with.")
-        print("ID: 0, will fill \"channesls.txt\" file with all chats that don’t belong to any folder (pinned chats included).")
-        print("ID: 1, will fill \"channesls.txt\" file with all arquived chats (pinned chats included).")
+        print("Warning! This will ADD the chat IDs to \"channels.txt\" file, not OVERWRITE them.")
+        print("ID: -4, will fill \"channels.txt\" file with all chats. If ID is not provided or incorrect this will be the default option.")
+        print("ID: -3, will fill \"channels.txt\" file with all chats from your contact list, including those that you have not started a conversation with.")
+        print("ID: -2, will fill \"channels.txt\" file with all chats that don’t belong to any folder (pinned chats not included).")
+        print("ID: -1, will fill \"channels.txt\" file with all arquived chats (pinned chats not included).")
+        print("ID: 0, will fill \"channels.txt\" file with all chats that don’t belong to any folder (pinned chats included).")
+        print("ID: 1, will fill \"channels.txt\" file with all arquived chats (pinned chats included).")
 
         folders_w_info = await bot.get_folders()
         for folder in folders_w_info:
