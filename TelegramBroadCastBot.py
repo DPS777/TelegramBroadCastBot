@@ -265,7 +265,7 @@ class TelegramBot:
                     await self.client.send_file(channel, message["FILE"], caption=message["MESSAGE"])
                 else:
                     await self.client.send_message(channel, message["MESSAGE"])
-            except telethon.errors.rpcerrorlist.ChatAdminRequiredError:
+            except Exception:
                 print(f"Skipping channel {channel} as you don't have admin permissions")
 
         print("Message sent successfully!")
@@ -292,7 +292,7 @@ def write_credentials(api_id, api_hash, phone_number):
 
 def read_message():
     message = {}
-    with open(MESSAGE_FILE, 'r') as f:
+    with open(MESSAGE_FILE, 'r', encoding='utf-8') as f:
         for line in f:
             key, value = line.strip().split('=', 1)
             message[key] = value
@@ -417,6 +417,8 @@ async def main():
             channels = [int(line.strip()) for line in f if line.strip()]
 
         print(f'Broadcasting message to {len(channels)} channels...')
+
+        message["MESSAGE"] = message["MESSAGE"].replace('\\n','\n')
 
         await bot.broadcast_message(message, channels)
         
